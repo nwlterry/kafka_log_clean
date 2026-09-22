@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Thin wrapper so the tool can be run like the other nwlterry shell helpers.
+# Build-if-needed wrapper, same idea as calling must-gather-clean after `make`.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec python3 "${ROOT}/kafka_log_clean.py" "$@"
+BIN="${ROOT}/bin/kafka_log_clean"
+if [[ ! -x "${BIN}" ]]; then
+  make -C "${ROOT}" build
+fi
+exec "${BIN}" "$@"
