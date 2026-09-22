@@ -1,0 +1,34 @@
+# Default Confluent Kafka / Connect / Schema Registry log cleaner.
+# Schema follows OpenShift must-gather-clean: omit + obfuscate.
+#
+# Do not commit a generated report.yaml — it maps real values to tokens.
+
+config:
+  omit:
+    - type: File
+      pattern: "**/*.p12"
+    - type: File
+      pattern: "**/*.jks"
+    - type: File
+      pattern: "**/*.keystore"
+    - type: File
+      pattern: "**/*.truststore"
+    - type: File
+      pattern: "**/*.key"
+    - type: File
+      pattern: "**/kafka_server_jaas.conf"
+
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+    - type: MAC
+      replacementType: Consistent
+      target: All
+    - type: Email
+      replacementType: Consistent
+      target: FileContents
+    - type: Secrets
+      enabled: true
+    - type: PEM
+      enabled: true

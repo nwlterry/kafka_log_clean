@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+report.yaml
+*.cleaned.*
+scrubbed-*.zip
+.DS_Store

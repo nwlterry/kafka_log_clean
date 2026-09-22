@@ -1,0 +1,17 @@
+[2026-09-22 02:11:04,120] INFO [KafkaServer id=1] started (kafka.server.KafkaServer)
+[2026-09-22 02:11:04,200] INFO [SocketServer listenerType=BROKER, nodeId=1] Created data-plane acceptor and processors for endpoint : ListenerName(SASL_SSL) / 10.40.50.11:9093
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="P@ssw0rd!";
+ssl.keystore.password=changeit
+ssl.truststore.password=changeit
+basic.auth.user.info=sr-user:sr-secret
+Authorization: Basic YWRtaW46UEBzc3cwcmQh
+producer.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="connect" password="C0nn3ct!";
+ldap.java.naming.security.credentials=LdapBind#99
+confluent.license=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.faketoken
+email=ops@kafka.example.com
+mac=aa:bb:cc:dd:ee:ff
+bootstrap url kafka://admin:P@ssw0rd!@10.40.50.11:9092
+localhost 127.0.0.1 remains
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC
+-----END PRIVATE KEY-----
