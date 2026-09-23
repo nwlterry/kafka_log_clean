@@ -5,7 +5,7 @@ GOFLAGS    ?=
 LDFLAGS    := -s -w -X main.Version=$(VERSION)
 PREFIX     ?= /usr/local
 
-.PHONY: all build test clean install fmt vet
+.PHONY: all build test clean install fmt vet dist
 
 all: build
 
@@ -23,9 +23,12 @@ vet:
 	$(GO) vet ./...
 
 clean:
-	rm -rf bin
+	rm -rf bin dist
 	rm -f report.yaml
 
 install: build
 	install -d $(PREFIX)/bin
 	install -m 0755 bin/$(BIN) $(PREFIX)/bin/$(BIN)
+
+dist:
+	bash hack/package.sh $(VERSION)
