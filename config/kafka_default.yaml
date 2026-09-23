@@ -32,3 +32,17 @@ config:
       enabled: true
     - type: PEM
       enabled: true
+    # Uncomment and list internal DNS suffixes to rewrite consistently.
+    # - type: Domain
+    #   replacementType: Consistent
+    #   target: All
+    #   domainNames:
+    #     - kafka.internal
+    #     - corp.local
+    # Uncomment to rewrite broker hostnames.
+    # - type: Keywords
+    #   target: FileContents
+    #   replacement:
+    #     kafka-broker-1: broker-a
+    #     kafka-broker-2: broker-b
+    # For IP + custom hostname maps see config/kafka_ip_name_map.yaml.

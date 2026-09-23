@@ -1,0 +1,58 @@
+# Sample: auto IP tokens + pinned IP/hostname → custom names.
+#
+# -c replaces the built-in config (it does not merge). Keep omit + Secrets
+# if you still want keystores / JAAS files dropped and passwords redacted.
+#
+# Keywords run before IP. Mapped IPs are not rewritten to x-ipv4-… tokens.
+# Unmapped IPs still get consistent tokens (x-ipv4-0000000001-x).
+# Loopback 127.0.0.1 / 0.0.0.0 / ::1 is never rewritten.
+#
+# Do not commit a filled-in copy of this file, or report.yaml.
+
+config:
+  omit:
+    - type: File
+      pattern: "**/*.p12"
+    - type: File
+      pattern: "**/*.jks"
+    - type: File
+      pattern: "**/*.keystore"
+    - type: File
+      pattern: "**/*.truststore"
+    - type: File
+      pattern: "**/*.key"
+    - type: File
+      pattern: "**/kafka_server_jaas.conf"
+
+  obfuscate:
+    - type: IP
+      replacementType: Consistent
+      target: All
+    - type: MAC
+      replacementType: Consistent
+      target: All
+    - type: Email
+      replacementType: Consistent
+      target: FileContents
+    - type: Secrets
+      enabled: true
+    - type: PEM
+      enabled: true
+    - type: Keywords
+      target: FileContents
+      replacement:
+        10.40.50.11: broker-a
+        10.40.50.12: broker-b
+        kafka-prod-01: broker-a
+        kafka-prod-02: broker-b
+    - type: Keywords
+      target: FilePath
+      replacement:
+        kafka-prod-01: broker-a
+        kafka-prod-02: broker-b
+    # - type: Domain
+    #   replacementType: Consistent
+    #   target: All
+    #   domainNames:
+    #     - kafka.internal
+    #     - corp.local
