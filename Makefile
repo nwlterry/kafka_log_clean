@@ -1,5 +1,5 @@
 BIN        := kafka_log_clean
-VERSION    ?= 1.1.0
+VERSION    ?= 1.2.0
 GO         ?= go
 GOFLAGS    ?=
 LDFLAGS    := -s -w -X main.Version=$(VERSION)
@@ -15,12 +15,6 @@ build:
 
 test:
 	$(GO) test ./...
-
-fmt:
-	$(GO) fmt ./...
-
-vet:
-	$(GO) vet ./...
 
 clean:
 	rm -rf bin dist

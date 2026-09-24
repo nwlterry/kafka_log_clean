@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="kafka_log_clean"
-VERSION="${1:-v1.1.0}"
+VERSION="${1:-v1.2.0}"
 VERSION="${VERSION#v}"
 cd "$ROOT"
 rm -rf dist
@@ -24,11 +24,11 @@ for spec in "${targets[@]}"; do
   name="${BIN}_${VERSION}_${os}_${arch}"
   echo "building $name"
   CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "$outdir/${BIN}${ext}" "./cmd/${BIN}"
-  cp config/kafka_default.yaml config/kafka_ip_name_map.yaml README.md LICENSE "$outdir/"
+  cp config/kafka_default.yaml config/kafka_ip_name_map.yaml README.md LICENSE scripts/kafka_log_clean.ps1 "$outdir/"
   if [[ "$os" == windows ]]; then
-    (cd "$outdir" && zip -q "${ROOT}/dist/${name}.zip" "${BIN}${ext}" kafka_default.yaml kafka_ip_name_map.yaml README.md LICENSE)
+    (cd "$outdir" && zip -q "${ROOT}/dist/${name}.zip" "${BIN}${ext}" kafka_default.yaml kafka_ip_name_map.yaml README.md LICENSE kafka_log_clean.ps1)
   else
-    tar -C "$outdir" -czf "${ROOT}/dist/${name}.tar.gz" "${BIN}${ext}" kafka_default.yaml kafka_ip_name_map.yaml README.md LICENSE
+    tar -C "$outdir" -czf "${ROOT}/dist/${name}.tar.gz" "${BIN}${ext}" kafka_default.yaml kafka_ip_name_map.yaml README.md LICENSE kafka_log_clean.ps1
   fi
   rm -rf "$outdir"
 done
