@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var Version = "1.1.0"
+var Version = "1.2.0"
 
 type report struct {
 	Tool           string              `yaml:"tool"`
@@ -39,6 +39,8 @@ func run(args []string) int {
 	reportPath := fs.String("r", "report.yaml", "Replacement report path")
 	workers := fs.Int("w", runtime.NumCPU(), "Worker threads")
 	stdin := fs.Bool("stdin", false, "Read stdin, write stdout")
+	verbose := fs.Bool("v", false, "Print per-file process output")
+	fs.BoolVar(verbose, "verbose", false, "Print per-file process output")
 	showVersion := fs.Bool("version", false, "Print version")
 	printDefault := fs.Bool("print-default-config", false, "Print built-in config")
 	if err := fs.Parse(args); err != nil {
@@ -65,6 +67,8 @@ func run(args []string) int {
 		cfg = loaded
 	}
 	c := clean.NewCleaner(cfg, nil)
+	clean.Verbose = *verbose
+	fmt.Fprintf(os.Stderr, "[kafka_log_clean %s] starting\n", Version)
 	if *stdin || (*input == "" && !isTTY()) {
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Print(c.ObfuscateText(string(data)))
@@ -97,10 +101,14 @@ func run(args []string) int {
 	info, _ := os.Stat(inp)
 	switch {
 	case strings.EqualFold(filepath.Ext(inp), ".zip"):
-		if err := clean.ExtractZip(inp, srcRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "extract: %s\n", inp)
+		n, err := clean.ExtractZip(inp, srcRoot)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+		fmt.Fprintf(os.Stderr, "extract: %d files\n", n)
+		fmt.Fprintf(os.Stderr, "process: workers=%d\n", *workers)
 		if err := clean.ProcessTree(c, srcRoot, dstRoot, *workers); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -122,6 +130,7 @@ func run(args []string) int {
 		if strings.EqualFold(filepath.Ext(out), ".zip") {
 			target = dstRoot
 		}
+		fmt.Fprintf(os.Stderr, "process: dir %s workers=%d\n", inp, *workers)
 		if err := clean.ProcessTree(c, inp, target, *workers); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -134,6 +143,7 @@ func run(args []string) int {
 		}
 	default:
 		rel := filepath.Base(inp)
+		fmt.Fprintf(os.Stderr, "process: file %s\n", inp)
 		if c.ShouldOmit(rel) {
 			c.AddOmitted(rel)
 		} else {
@@ -164,7 +174,7 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Printf("cleaned: %s\nreport:  %s  (keep private)\nfiles:   %d processed, %d omitted\n", out, *reportPath, c.Processed, len(c.Omitted))
+	fmt.Printf("cleaned: %s\nreport:  %s  (keep private)\nfiles:   %d processed, %d omitted\nmappings: %d unique replacements\n", out, *reportPath, c.Processed, len(c.Omitted), len(c.Store.Report()))
 	return 0
 }
 
