@@ -15,7 +15,7 @@ import (
 var textExt = map[string]struct{}{
 	".log": {}, ".txt": {}, ".json": {}, ".ndjson": {}, ".yml": {}, ".yaml": {},
 	".xml": {}, ".csv": {}, ".properties": {}, ".conf": {}, ".cfg": {}, ".ini": {},
-	".out": {}, ".err": {}, ".md": {}, ".html": {},
+	".out": {}, ".err": {}, ".md": {}, ".html": {}, ".js": {}, ".sh": {}, ".bat": {}, ".ps1": {},
 }
 
 var binExt = map[string]struct{}{
@@ -94,6 +94,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 	if err != nil {
 		return err
 	}
+	Logf("process: %d files found under %s", len(files), src)
 	if workers < 1 {
 		workers = runtime.NumCPU()
 	}
@@ -123,6 +124,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 			rel = filepath.ToSlash(rel)
 			if c.ShouldOmit(rel) {
 				c.AddOmitted(rel)
+				Logf("omit   %s", rel)
 				return
 			}
 			data, err := os.ReadFile(f)
@@ -134,9 +136,11 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				mu.Unlock()
 				return
 			}
-			target := filepath.Join(dst, filepath.FromSlash(c.ObfuscatePath(rel)))
+			outRel := c.ObfuscatePath(rel)
+			target := filepath.Join(dst, filepath.FromSlash(outRel))
 			_ = os.MkdirAll(filepath.Dir(target), 0o755)
-			if err := os.WriteFile(target, ProcessBytes(c, data, filepath.Base(f)), 0o644); err != nil {
+			cleaned := ProcessBytes(c, data, filepath.Base(f))
+			if err := os.WriteFile(target, cleaned, 0o644); err != nil {
 				mu.Lock()
 				if first == nil {
 					first = err
@@ -145,18 +149,20 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				return
 			}
 			c.AddProcessed()
+			Logf("clean  %s -> %s (%d bytes)", rel, outRel, len(cleaned))
 		}()
 	}
 	wg.Wait()
 	return first
 }
 
-func ExtractZip(archive, dest string) error {
+func ExtractZip(archive, dest string) (int, error) {
 	r, err := zip.OpenReader(archive)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer r.Close()
+	n := 0
 	for _, f := range r.File {
 		target := filepath.Join(dest, f.Name)
 		if f.FileInfo().IsDir() {
@@ -166,18 +172,19 @@ func ExtractZip(archive, dest string) error {
 		_ = os.MkdirAll(filepath.Dir(target), 0o755)
 		rc, err := f.Open()
 		if err != nil {
-			return err
+			return n, err
 		}
 		data, err := io.ReadAll(rc)
 		_ = rc.Close()
 		if err != nil {
-			return err
+			return n, err
 		}
 		if err := os.WriteFile(target, data, 0o644); err != nil {
-			return err
+			return n, err
 		}
+		n++
 	}
-	return nil
+	return n, nil
 }
 
 func WriteZip(srcDir, archive string) error {
