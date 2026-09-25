@@ -10,27 +10,27 @@ import (
 )
 
 type Cleaner struct {
-	cfg           Config
-	Store         *MappingStore
-	Omitted       []string
-	Processed     int
-	mu            sync.Mutex
-	custom        []*regexp.Regexp
-	customRepl    []string
-	keywords      [][2]string
-	pathKeywords  [][2]string
-	domains       []string
-	ipMode        string
-	macMode       string
-	domainMode    string
-	emailMode     string
-	enableIP      bool
-	enableMAC     bool
-	enableDomain  bool
-	enableEmail   bool
+	cfg Config
+	Store *MappingStore
+	Omitted []string
+	Processed int
+	mu sync.Mutex
+	custom []*regexp.Regexp
+	customRepl []string
+	keywords [][2]string
+	pathKeywords [][2]string
+	domains []string
+	ipMode string
+	macMode string
+	domainMode string
+	emailMode string
+	enableIP bool
+	enableMAC bool
+	enableDomain bool
+	enableEmail bool
 	enableSecrets bool
-	enablePEM     bool
-	secrets       []secretPat
+	enablePEM bool
+	secrets []secretPat
 }
 
 func NewCleaner(cfg Config, secrets []secretPat) *Cleaner {
@@ -179,6 +179,7 @@ func (c *Cleaner) replIPv6(v string) string {
 }
 
 func (c *Cleaner) ObfuscateText(text string) string {
+	text = c.redactLDAP(text)
 	if c.enablePEM {
 		text = pemRe.ReplaceAllString(text, "-----BEGIN REDACTED-----\nx-redacted-pem-x\n-----END REDACTED-----")
 	}
