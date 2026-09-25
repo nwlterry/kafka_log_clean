@@ -15,6 +15,8 @@ var (
 	pemRe      = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----`)
 	clockRe = regexp.MustCompile(`^(?:[01]?\d|2[0-3]):[0-5]?\d:[0-5]?\d(?:\.\d{1,9})?$`)
 	moduleVerRe = regexp.MustCompile(`(?i)^\d+\.\d+`)
+	ldapDNRe = regexp.MustCompile(`(?i)(?:cn|ou|dc|uid|o|l|st|c|givenname|sn|mail|samaccountname|userprincipalname)\s*=\s*[^,=;()]+(?:\s*,\s*(?:cn|ou|dc|uid|o|l|st|c|givenname|sn|mail|samaccountname|userprincipalname)\s*=\s*[^,=;()]+){1,}`)
+	ldapFilterRe = regexp.MustCompile(`(?i)(\((?:cn|uid|sAMAccountName|userPrincipalName|mail|memberOf|member|distinguishedName)\s*=\s*)([^)\\]+)(\))`)
 )
 
 var nonMailTLDs = map[string]struct{}{
@@ -71,7 +73,7 @@ type secretPat struct {
 var defaultSecrets = []secretPat{
 	{regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(basic|bearer)\s+[A-Za-z0-9+/=._\-]+`), `${1}${2} x-redacted-auth-x`},
 	{regexp.MustCompile(`(?i)((?:password|passwd|username)\s*=\s*)(?:"[^"]+"|'[^']+'|[^\s;"']+)`), `${1}x-redacted-secret-x`},
-	{regexp.MustCompile(`(?i)((?:ssl\.(?:keystore|truststore|key)\.password|ssl\.keystore\.key|sasl\.jaas\.config|confluent\.license|basic\.auth\.user\.info)\s*[=:]\s*)([^\s,]+)`), `${1}x-redacted-secret-x`},
+	{regexp.MustCompile(`(?i)((?:ssl\.(?:keystore|truststore|key)\.password|sasl\.jaas\.config|basic\.auth\.user\.info|ldap\.java\.naming\.security\.credentials)\s*[=:]\s*)([^\s,]+)`), `${1}x-redacted-secret-x`},
 	{regexp.MustCompile(`(?i)((?:password|passwd|secret|token|api[_-]?key|sasl\.password)\s*[=:]\s*)([^\s,"'}]+)`), `${1}x-redacted-secret-x`},
 	{regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api_key|authorization|jaas)"\s*:\s*")([^"]+)"`), `${1}x-redacted-secret-x"`},
 	{regexp.MustCompile(`(?i)(://[^:/@\s]+:)([^@/\s]+)(@)`), `${1}x-redacted-secret-x${3}`},
