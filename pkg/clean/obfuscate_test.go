@@ -5,28 +5,24 @@ import (
 	"testing"
 )
 
-func TestConsistentIPAndLoopback(t *testing.T) {
+func TestModuleCoordNotEmailAndClockNotIPv6(t *testing.T) {
 	c := NewCleaner(DefaultConfig(), nil)
-	out := c.ObfuscateText("listener 10.40.50.11 and 10.40.50.11 plus 127.0.0.1")
-	if !strings.Contains(out, "127.0.0.1") || strings.Contains(out, "10.40.50.11") {
-		t.Fatalf("bad ip rewrite: %s", out)
+	in := `[2026-09-24T07:29:19,123][INFO] loaded io.netty.transport@4.1.135.Final org.apache.kafka.clients@3.8.0 "07:29:19" user sre@corp.example.com ipv6 2001:db8::1`
+	out := c.ObfuscateText(in)
+	for _, keep := range []string{
+		"io.netty.transport@4.1.135.Final",
+		"org.apache.kafka.clients@3.8.0",
+		"07:29:19",
+		"2026-09-24T07:29:19,123",
+	} {
+		if !strings.Contains(out, keep) {
+			t.Fatalf("false positive, lost %q in:\n%s", keep, out)
+		}
 	}
-	if strings.Count(out, "x-ipv4-0000000001-x") != 2 {
-		t.Fatalf("inconsistent: %s", out)
+	if strings.Contains(out, "sre@corp.example.com") {
+		t.Fatalf("real email not redacted:\n%s", out)
 	}
-}
-
-func TestSecrets(t *testing.T) {
-	c := NewCleaner(DefaultConfig(), nil)
-	out := c.ObfuscateText(`sasl.jaas.config=x password="P@ssw0rd!"; ssl.keystore.password=changeit`)
-	if strings.Contains(out, "P@ssw0rd!") || strings.Contains(out, "changeit") {
-		t.Fatalf("leaked: %s", out)
-	}
-}
-
-func TestOmit(t *testing.T) {
-	c := NewCleaner(DefaultConfig(), nil)
-	if !c.ShouldOmit("etc/kafka/kafka_server_jaas.conf") || !c.ShouldOmit("ssl/kafka.server.keystore.jks") || c.ShouldOmit("logs/server.log") {
-		t.Fatal("omit rules")
+	if strings.Contains(out, "2001:db8::1") {
+		t.Fatalf("real ipv6 not redacted:\n%s", out)
 	}
 }

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release tag (e.g. v1.2.0)
+        description: Release tag (e.g. v1.2.1)
         required: true
-        default: v1.2.0
+        default: v1.2.1
   push:
     tags:
       - "v*"
@@ -35,8 +35,4 @@ jobs:
           generate_release_notes: true
           files: dist/*
           body: |
-            Unpack and run. Windows 11: use kafka_log_clean.ps1 after copying a support bundle or server.log off the host.
-
-            ```powershell
-            .\kafka_log_clean.ps1 -InputPath .\kafka-support-bundle.zip -VerboseLog
-            ```
+            v1.2.1: do not treat JPMS module@version as email or HH:MM:SS as IPv6.

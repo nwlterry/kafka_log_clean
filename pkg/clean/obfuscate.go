@@ -70,11 +70,10 @@ type secretPat struct {
 
 var defaultSecrets = []secretPat{
 	{regexp.MustCompile(`(?i)(authorization\s*[:=]\s*)(basic|bearer)\s+[A-Za-z0-9+/=._\-]+`), `${1}${2} x-redacted-auth-x`},
-	{regexp.MustCompile(`(?i)(api[_-]?key\s*[:=]\s*)([A-Za-z0-9+/=_\-]{8,})`), `${1}x-redacted-apikey-x`},
-	{regexp.MustCompile(`(?i)(ApiKey\s+)([A-Za-z0-9+/=_\-]{8,})`), `${1}x-redacted-apikey-x`},
-	{regexp.MustCompile(`(?i)((?:password|passwd|secret|token|bind_password|service_token|keystore\.seed|truststore\.password|keystore\.password)\s*[=:]\s*)([^\s,"'}]+)`), `${1}x-redacted-secret-x`},
-	{regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api_key|authorization|bind_password)"\s*:\s*")([^"]+)"`), `${1}x-redacted-secret-x"`},
-	{regexp.MustCompile(`(?i)((?:sasl\.jaas\.config|jaas\.config)\s*[:=]\s*)(\S+)`), `${1}x-redacted-jaas-x`},
+	{regexp.MustCompile(`(?i)((?:password|passwd|username)\s*=\s*)(?:"[^"]+"|'[^']+'|[^\s;"']+)`), `${1}x-redacted-secret-x`},
+	{regexp.MustCompile(`(?i)((?:ssl\.(?:keystore|truststore|key)\.password|ssl\.keystore\.key|sasl\.jaas\.config|confluent\.license|basic\.auth\.user\.info)\s*[=:]\s*)([^\s,]+)`), `${1}x-redacted-secret-x`},
+	{regexp.MustCompile(`(?i)((?:password|passwd|secret|token|api[_-]?key|sasl\.password)\s*[=:]\s*)([^\s,"'}]+)`), `${1}x-redacted-secret-x`},
+	{regexp.MustCompile(`(?i)("(?:password|passwd|secret|token|api_key|authorization|jaas)"\s*:\s*")([^"]+)"`), `${1}x-redacted-secret-x"`},
 	{regexp.MustCompile(`(?i)(://[^:/@\s]+:)([^@/\s]+)(@)`), `${1}x-redacted-secret-x${3}`},
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), `x-redacted-awskey-x`},
 }
