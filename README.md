@@ -51,3 +51,24 @@ Consistent tokens (`x-ipv4-…`, `x-email-…`, `x-ldapdn-…`, `x-certsubj-…`
 - LDAP DNs keep multi-word values and the full `DC=` chain, including a trailing `}}`
 
 Flags: `-c` `-i` `-o` `-w` `-r` `-v`. Do **not** share `report.yaml`.
+
+
+## Archives
+
+Input can be a folder or an archive. Supported: `.zip`, `.tar`, `.tar.gz`, `.tgz`, and single-file `.gz`.
+
+The tool expands the archive, scans every file (including nested zip/tar.gz), then writes the same archive type back.
+
+## Report
+
+Default report path is `report-<input>.yaml` next to the working directory, using the archive or folder name:
+
+- `diagnostics.zip` → `report-diagnostics.yaml`
+- `support-bundle.tar.gz` → `report-support-bundle.yaml`
+- `cluster-logs/` → `report-cluster-logs.yaml`
+
+Override with `-r`. Do **not** share the report.
+
+## Principals
+
+Kafka authorizer / ACL lines such as `User:first_name.last_name` and `Principal = User:alice` become `User:x-user-…` with a consistent token.
