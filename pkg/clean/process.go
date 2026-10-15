@@ -35,7 +35,8 @@ func isText(name string, sample []byte) bool {
 	switch base {
 	case "server.properties", "producer.properties", "consumer.properties",
 		"connect-distributed.properties", "kafka_server_jaas.conf",
-		"log4j.properties", "log4j2.yaml", "log4j2.properties":
+		"log4j.properties", "log4j2.yaml", "log4j2.properties",
+		"kafka-authorizer.log", "authorizer.log":
 		return true
 	}
 	if bytes.IndexByte(sample, 0) >= 0 {
@@ -56,9 +57,10 @@ func ProcessBytes(c *Cleaner, data []byte, name string) []byte {
 		if err != nil {
 			return data
 		}
+		cleaned := []byte(c.ObfuscateText(string(inner)))
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
-		_, _ = zw.Write([]byte(c.ObfuscateText(string(inner))))
+		_, _ = zw.Write(cleaned)
 		_ = zw.Close()
 		return buf.Bytes()
 	}
@@ -95,7 +97,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 		return err
 	}
 	Logf("process: %d files found under %s", len(files), src)
-	if workers < 1 {
+	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
 	if workers < 1 {
@@ -138,8 +140,28 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 			}
 			outRel := c.ObfuscatePath(rel)
 			target := filepath.Join(dst, filepath.FromSlash(outRel))
-			_ = os.MkdirAll(filepath.Dir(target), 0o755)
-			cleaned := ProcessBytes(c, data, filepath.Base(f))
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				mu.Lock()
+				if first == nil {
+					first = err
+				}
+				mu.Unlock()
+				return
+			}
+			var cleaned []byte
+			if IsMultiArchive(filepath.Base(f)) {
+				cleaned, err = processNestedArchive(c, data, filepath.Base(f), workers)
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					return
+				}
+			} else {
+				cleaned = ProcessBytes(c, data, filepath.Base(f))
+			}
 			if err := os.WriteFile(target, cleaned, 0o644); err != nil {
 				mu.Lock()
 				if first == nil {
@@ -156,6 +178,35 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 	return first
 }
 
+// processNestedArchive expands a zip/tar/tar.gz found inside the tree, cleans
+// its contents, and re-packs the same archive type.
+func processNestedArchive(c *Cleaner, data []byte, name string, workers int) ([]byte, error) {
+	tmp, err := os.MkdirTemp("", "logclean-nested-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	src := filepath.Join(tmp, "src")
+	dst := filepath.Join(tmp, "dst")
+	inFile := filepath.Join(tmp, name)
+	if err := os.WriteFile(inFile, data, 0o644); err != nil {
+		return nil, err
+	}
+	n, err := ExtractArchive(inFile, src)
+	if err != nil {
+		return nil, err
+	}
+	Logf("extract nested %s (%d files)", name, n)
+	if err := ProcessTree(c, src, dst, workers); err != nil {
+		return nil, err
+	}
+	outFile := filepath.Join(tmp, "out-"+name)
+	if err := WriteArchive(dst, outFile); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(outFile)
+}
+
 func ExtractZip(archive, dest string) (int, error) {
 	r, err := zip.OpenReader(archive)
 	if err != nil {
@@ -165,6 +216,10 @@ func ExtractZip(archive, dest string) (int, error) {
 	n := 0
 	for _, f := range r.File {
 		target := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(filepath.Clean(target)+string(os.PathSeparator), filepath.Clean(dest)+string(os.PathSeparator)) &&
+			filepath.Clean(target) != filepath.Clean(dest) {
+			continue
+		}
 		if f.FileInfo().IsDir() {
 			_ = os.MkdirAll(target, 0o755)
 			continue
