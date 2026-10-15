@@ -19,6 +19,8 @@ var (
 	// Maven/JPMS version after @, e.g. 4.1.135.Final
 	moduleVerRe = regexp.MustCompile(`(?i)^\d+\.\d+`)
 	ldapFilterRe = regexp.MustCompile(`(?i)(\((?:cn|uid|sAMAccountName|userPrincipalName|mail|memberOf|member|distinguishedName)\s*=\s*)([^)\\]+)(\))`)
+	// Kafka ACL / authorizer principal: User:alice or User:first_name.last_name
+	userPrincipalRe = regexp.MustCompile(`(?i)\b(user)\s*:\s*([A-Za-z][A-Za-z0-9._\-]{0,200})`)
 )
 
 var nonMailTLDs = map[string]struct{}{
