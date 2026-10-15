@@ -10,31 +10,45 @@ import (
 )
 
 type Cleaner struct {
-	cfg Config
-	Store *MappingStore
-	Omitted []string
-	Processed int
-	mu sync.Mutex
-	custom []*regexp.Regexp
-	customRepl []string
-	keywords [][2]string
-	pathKeywords [][2]string
-	domains []string
-	ipMode string
-	macMode string
-	domainMode string
-	emailMode string
-	enableIP bool
-	enableMAC bool
-	enableDomain bool
-	enableEmail bool
+	cfg           Config
+	Store         *MappingStore
+	Omitted       []string
+	Processed     int
+	mu            sync.Mutex
+	custom        []*regexp.Regexp
+	customRepl    []string
+	keywords      [][2]string
+	pathKeywords  [][2]string
+	domains       []string
+	ipMode        string
+	macMode       string
+	domainMode    string
+	emailMode     string
+	enableIP      bool
+	enableMAC     bool
+	enableDomain  bool
+	enableEmail   bool
 	enableSecrets bool
-	enablePEM bool
-	secrets []secretPat
+	enablePEM     bool
+	enableLDAP    bool
+	ldapMode      string
+	secrets       []secretPat
 }
 
 func NewCleaner(cfg Config, secrets []secretPat) *Cleaner {
-	c := &Cleaner{cfg: cfg, Store: NewMappingStore(), ipMode: "Consistent", macMode: "Consistent", domainMode: "Consistent", emailMode: "Consistent", enableSecrets: true, enablePEM: true, secrets: secrets}
+	c := &Cleaner{
+		cfg:           cfg,
+		Store:         NewMappingStore(),
+		ipMode:        "Consistent",
+		macMode:       "Consistent",
+		domainMode:    "Consistent",
+		emailMode:     "Consistent",
+		enableSecrets: true,
+		enablePEM:     true,
+		enableLDAP:    true,
+		ldapMode:      "Consistent",
+		secrets:       secrets,
+	}
 	if c.secrets == nil {
 		c.secrets = defaultSecrets
 	}
@@ -72,6 +86,12 @@ func NewCleaner(cfg Config, secrets []secretPat) *Cleaner {
 			}
 			if pat != "" {
 				if re, err := regexp.Compile(pat); err == nil {
+					repl := rule.Replacement["value"]
+					if repl == "" {
+						// allow single replacement via unused map; default token
+						repl = "x-redacted-regex-x"
+					}
+					// If Replacement map used as keyword-style, ignore; CLI yaml uses "replacement:" string.
 					c.custom = append(c.custom, re)
 					c.customRepl = append(c.customRepl, firstRepl(rule))
 				}
@@ -84,8 +104,15 @@ func NewCleaner(cfg Config, secrets []secretPat) *Cleaner {
 			if rule.Enabled != nil {
 				c.enablePEM = *rule.Enabled
 			}
+		case "ldap", "dn", "ldapdn":
+			c.enableLDAP = true
+			c.ldapMode = mode
+			if rule.Enabled != nil {
+				c.enableLDAP = *rule.Enabled
+			}
 		}
 	}
+	_ = sortedPairs
 	return c
 }
 
@@ -179,7 +206,6 @@ func (c *Cleaner) replIPv6(v string) string {
 }
 
 func (c *Cleaner) ObfuscateText(text string) string {
-	text = c.redactLDAP(text)
 	if c.enablePEM {
 		text = pemRe.ReplaceAllString(text, "-----BEGIN REDACTED-----\nx-redacted-pem-x\n-----END REDACTED-----")
 	}
@@ -196,6 +222,10 @@ func (c *Cleaner) ObfuscateText(text string) string {
 			text = s.re.ReplaceAllString(text, s.repl)
 		}
 	}
+	if c.enableLDAP {
+		text = c.redactDNs(text)
+	}
+	text = c.redactUserPrincipals(text)
 	if c.enableEmail {
 		text = emailRe.ReplaceAllStringFunc(text, func(v string) string {
 			if !looksLikeEmail(v) {
@@ -228,8 +258,28 @@ func (c *Cleaner) ObfuscateText(text string) string {
 	return text
 }
 
+
+func (c *Cleaner) redactUserPrincipals(text string) string {
+	return userPrincipalRe.ReplaceAllStringFunc(text, func(v string) string {
+		m := userPrincipalRe.FindStringSubmatch(v)
+		if len(m) != 3 {
+			return v
+		}
+		name := m[2]
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "x-") || name == "" {
+			return v
+		}
+		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
+		return m[1] + ":" + tok
+	})
+}
+
 func replaceIPv4(text string, fn func(string) string) string {
-	return ipv4OnlyRe.ReplaceAllStringFunc(text, func(v string) string { return fn(v) })
+	return ipv4OnlyRe.ReplaceAllStringFunc(text, func(v string) string {
+		// Avoid turning "8.18.4" (3 octets) — regex already requires 4.
+		return fn(v)
+	})
 }
 
 func (c *Cleaner) AddOmitted(rel string) {
