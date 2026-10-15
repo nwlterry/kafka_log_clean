@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var Version = "1.0.0"
+var Version = "1.0.1"
 
 type report struct {
 	Tool           string              `yaml:"tool"`
@@ -28,15 +28,17 @@ type report struct {
 	Warning        string              `yaml:"warning"`
 }
 
-func main() { os.Exit(run(os.Args[1:])) }
+func main() {
+	os.Exit(run(os.Args[1:]))
+}
 
 func run(args []string) int {
 	fs := flag.NewFlagSet("kafka_log_clean", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	configPath := fs.String("c", "", "YAML config")
+	configPath := fs.String("c", "", "YAML config (omit + obfuscate)")
 	input := fs.String("i", "", "Input file, directory, or .zip")
 	output := fs.String("o", "", "Output file, directory, or .zip")
-	reportPath := fs.String("r", "report.yaml", "Replacement report path")
+	reportPath := fs.String("r", "", "Replacement report path (default: report-<input>.yaml)")
 	workers := fs.Int("w", runtime.NumCPU(), "Worker threads")
 	stdin := fs.Bool("stdin", false, "Read stdin, write stdout")
 	verbose := fs.Bool("v", false, "Print per-file process output")
@@ -46,6 +48,7 @@ func run(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+
 	if *showVersion {
 		fmt.Println(Version)
 		return 0
@@ -57,6 +60,7 @@ func run(args []string) int {
 		_ = enc.Close()
 		return 0
 	}
+
 	cfg := clean.DefaultConfig()
 	if *configPath != "" {
 		loaded, err := clean.LoadConfig(*configPath)
@@ -68,7 +72,8 @@ func run(args []string) int {
 	}
 	c := clean.NewCleaner(cfg, nil)
 	clean.Verbose = *verbose
-	fmt.Fprintf(os.Stderr, "[kafka_log_clean %s] starting\n", Version)
+	fmt.Fprintf(os.Stderr, "[%s %s] starting\n", "kafka_log_clean", Version)
+
 	if *stdin || (*input == "" && !isTTY()) {
 		data, _ := io.ReadAll(os.Stdin)
 		fmt.Print(c.ObfuscateText(string(data)))
@@ -78,6 +83,7 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: provide -i or pipe text on stdin")
 		return 2
 	}
+
 	inp, err := filepath.Abs(*input)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -88,6 +94,11 @@ func run(args []string) int {
 		return 2
 	}
 	out := resolveOutput(inp, *output)
+	rep := *reportPath
+	if rep == "" || rep == "report.yaml" {
+		rep = defaultReportName(inp)
+	}
+
 	tmp, err := os.MkdirTemp("", "kafka_log_clean_*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -98,23 +109,24 @@ func run(args []string) int {
 	dstRoot := filepath.Join(tmp, "dst")
 	_ = os.MkdirAll(srcRoot, 0o755)
 	_ = os.MkdirAll(dstRoot, 0o755)
+
 	info, _ := os.Stat(inp)
 	switch {
-	case strings.EqualFold(filepath.Ext(inp), ".zip"):
+	case clean.IsMultiArchive(inp):
 		fmt.Fprintf(os.Stderr, "extract: %s\n", inp)
-		n, err := clean.ExtractZip(inp, srcRoot)
+		n, err := clean.ExtractArchive(inp, srcRoot)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(os.Stderr, "extract: %d files\n", n)
-		fmt.Fprintf(os.Stderr, "process: workers=%d\n", *workers)
+		fmt.Fprintf(os.Stderr, "process: tree %s workers=%d\n", srcRoot, *workers)
 		if err := clean.ProcessTree(c, srcRoot, dstRoot, *workers); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		if strings.EqualFold(filepath.Ext(out), ".zip") {
-			if err := clean.WriteZip(dstRoot, out); err != nil {
+		if clean.IsMultiArchive(out) {
+			if err := clean.WriteArchive(dstRoot, out); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				return 1
 			}
@@ -127,23 +139,22 @@ func run(args []string) int {
 		}
 	case info.IsDir():
 		target := out
-		if strings.EqualFold(filepath.Ext(out), ".zip") {
+		if clean.IsMultiArchive(out) {
 			target = dstRoot
 		}
-		fmt.Fprintf(os.Stderr, "process: dir %s workers=%d\n", inp, *workers)
+		fmt.Fprintf(os.Stderr, "process: tree %s workers=%d\n", inp, *workers)
 		if err := clean.ProcessTree(c, inp, target, *workers); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		if strings.EqualFold(filepath.Ext(out), ".zip") {
-			if err := clean.WriteZip(dstRoot, out); err != nil {
+		if clean.IsMultiArchive(out) {
+			if err := clean.WriteArchive(dstRoot, out); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				return 1
 			}
 		}
 	default:
 		rel := filepath.Base(inp)
-		fmt.Fprintf(os.Stderr, "process: file %s\n", inp)
 		if c.ShouldOmit(rel) {
 			c.AddOmitted(rel)
 		} else {
@@ -152,29 +163,53 @@ func run(args []string) int {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				return 1
 			}
-			_ = os.MkdirAll(filepath.Dir(out), 0o755)
-			if err := os.WriteFile(out, clean.ProcessBytes(c, data, rel), 0o644); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				return 1
+			cleaned := clean.ProcessBytes(c, data, rel)
+			if strings.EqualFold(filepath.Ext(out), ".zip") {
+				_ = os.MkdirAll(filepath.Dir(out), 0o755)
+				// write single-file zip via temp dir
+				tmpf := filepath.Join(dstRoot, c.ObfuscatePath(rel))
+				_ = os.MkdirAll(filepath.Dir(tmpf), 0o755)
+				_ = os.WriteFile(tmpf, cleaned, 0o644)
+				if err := clean.WriteZip(dstRoot, out); err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					return 1
+				}
+			} else {
+				_ = os.MkdirAll(filepath.Dir(out), 0o755)
+				if err := os.WriteFile(out, cleaned, 0o644); err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					return 1
+				}
 			}
 			c.AddProcessed()
 		}
 	}
-	b, err := yaml.Marshal(report{
-		Tool: "kafka_log_clean", Version: Version, Input: inp, Output: out,
-		ProcessedFiles: c.Processed, OmittedFiles: append([]string{}, c.Omitted...),
-		Replacements: c.Store.Report(), Config: cfg,
-		Warning: "Do not share this report. It maps original values to replacements.",
-	})
+
+	omitted := append([]string{}, c.Omitted...)
+	rpt := report{
+		Tool:           "kafka_log_clean",
+		Version:        Version,
+		Input:          inp,
+		Output:         out,
+		ProcessedFiles: c.Processed,
+		OmittedFiles:   omitted,
+		Replacements:   c.Store.Report(),
+		Config:         cfg,
+		Warning:        "Do not share this report. It maps original values to replacements.",
+	}
+	b, err := yaml.Marshal(rpt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	if err := os.WriteFile(*reportPath, b, 0o600); err != nil {
+	if err := os.WriteFile(rep, b, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Printf("cleaned: %s\nreport:  %s  (keep private)\nfiles:   %d processed, %d omitted\nmappings: %d unique replacements\n", out, *reportPath, c.Processed, len(c.Omitted), len(c.Store.Report()))
+	fmt.Printf("cleaned: %s\n", out)
+	fmt.Printf("report:  %s  (keep private)\n", rep)
+	fmt.Printf("files:   %d processed, %d omitted\n", c.Processed, len(c.Omitted))
+	printReplacementSummary(c)
 	return 0
 }
 
@@ -183,7 +218,7 @@ func resolveOutput(inp, output string) string {
 		abs, _ := filepath.Abs(output)
 		return abs
 	}
-	if strings.EqualFold(filepath.Ext(inp), ".zip") {
+	if clean.IsMultiArchive(inp) {
 		return filepath.Join(filepath.Dir(inp), "scrubbed-"+filepath.Base(inp))
 	}
 	info, err := os.Stat(inp)
@@ -192,6 +227,37 @@ func resolveOutput(inp, output string) string {
 		return strings.TrimSuffix(inp, ext) + ".cleaned" + ext
 	}
 	return inp + "-cleaned"
+}
+
+func defaultReportName(inp string) string {
+	base := filepath.Base(inp)
+	stem := base
+	lower := strings.ToLower(base)
+	switch {
+	case strings.HasSuffix(lower, ".tar.gz"):
+		stem = base[:len(base)-len(".tar.gz")]
+	case strings.HasSuffix(lower, ".tgz"):
+		stem = base[:len(base)-len(".tgz")]
+	case strings.HasSuffix(lower, ".tar"):
+		stem = base[:len(base)-len(".tar")]
+	case strings.HasSuffix(lower, ".zip"):
+		stem = base[:len(base)-len(".zip")]
+	case strings.HasSuffix(lower, ".gz"):
+		stem = base[:len(base)-len(".gz")]
+	}
+	stem = strings.TrimSpace(stem)
+	if stem == "" || stem == "." {
+		stem = "input"
+	}
+	stem = strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
+			return '-'
+		default:
+			return r
+		}
+	}, stem)
+	return "report-" + stem + ".yaml"
 }
 
 func isTTY() bool {
@@ -219,7 +285,21 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		_ = os.MkdirAll(filepath.Dir(target), 0o755)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
 		return os.WriteFile(target, data, 0o644)
 	})
+}
+
+func printReplacementSummary(c *clean.Cleaner) {
+	reps := c.Store.Report()
+	fmt.Printf("mappings: %d unique replacements\n", len(reps))
+	if len(c.Omitted) > 0 && len(c.Omitted) <= 20 {
+		for _, o := range c.Omitted {
+			fmt.Printf("  omitted %s\n", o)
+		}
+	} else if len(c.Omitted) > 20 {
+		fmt.Printf("  omitted %d files (see report.yaml)\n", len(c.Omitted))
+	}
 }
