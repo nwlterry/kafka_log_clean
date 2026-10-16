@@ -233,6 +233,31 @@ func TestCertSubjectSeparateFromLDAPDN(t *testing.T) {
 	}
 }
 
+func TestBrowserVersionNotIPv4(t *testing.T) {
+	c := NewCleaner(DefaultConfig(), nil)
+	in := `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0 OPR/108.0.0.0 Firefox/131.0.0.0 Version/17.6.1.0 CriOS/120.0.6099.119 host 10.20.30.41`
+	out := c.ObfuscateText(in)
+	for _, keep := range []string{
+		"Chrome/155.0.0.0",
+		"Edg/155.0.0.0",
+		"OPR/108.0.0.0",
+		"Firefox/131.0.0.0",
+		"Version/17.6.1.0",
+		"CriOS/120.0.6099.119",
+		"AppleWebKit/537.36",
+	} {
+		if !strings.Contains(out, keep) {
+			t.Fatalf("browser version rewritten %q in:\n%s", keep, out)
+		}
+	}
+	if strings.Contains(out, "10.20.30.41") {
+		t.Fatalf("real ipv4 not redacted:\n%s", out)
+	}
+	if !strings.Contains(out, "x-ipv4-") {
+		t.Fatalf("missing ipv4 token:\n%s", out)
+	}
+}
+
 func TestModuleCoordNotEmailAndClockNotIPv6(t *testing.T) {
 	c := NewCleaner(DefaultConfig(), nil)
 	in := `[2026-09-24T07:29:19,123][INFO] loaded io.netty.transport@4.1.135.Final org.apache.kafka.clients@3.8.0 "07:29:19" user sre@corp.example.com ipv6 2001:db8::1`
