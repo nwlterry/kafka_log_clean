@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var Version = "1.0.5"
+var Version = "1.0.7"
 
 type report struct {
 	Tool           string              `yaml:"tool"`

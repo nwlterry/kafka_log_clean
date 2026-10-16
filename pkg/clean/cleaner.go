@@ -226,6 +226,10 @@ func (c *Cleaner) ObfuscateText(text string) string {
 		text = c.redactDNs(text)
 	}
 	text = c.redactUserPrincipals(text)
+	text = c.redactUserNameAssignments(text)
+	text = c.redactJSONPrincipals(text)
+	text = c.redactLoginUsers(text)
+	text = c.redactMDSRequestUsers(text)
 	if c.enableEmail {
 		text = emailRe.ReplaceAllStringFunc(text, func(v string) string {
 			if !looksLikeEmail(v) {
@@ -272,6 +276,88 @@ func (c *Cleaner) redactUserPrincipals(text string) string {
 		}
 		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
 		return m[1] + ":" + tok
+	})
+}
+
+// redactUserNameAssignments covers username=alice, username="alice",
+// userPrincipalName=alice, and the same with single quotes — forms that
+// appear in MDS login, JAAS, request logger, and REST auth logs.
+func (c *Cleaner) redactUserNameAssignments(text string) string {
+	return userNameAssignRe.ReplaceAllStringFunc(text, func(v string) string {
+		m := userNameAssignRe.FindStringSubmatch(v)
+		if len(m) != 3 {
+			return v
+		}
+		name := m[2]
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "x-") || name == "" {
+			return v
+		}
+		quote := ""
+		if i := strings.IndexAny(v, `"'`); i >= 0 {
+			quote = string(v[i])
+		}
+		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
+		if quote != "" {
+			return m[1] + "=" + quote + tok + quote
+		}
+		return m[1] + "=" + tok
+	})
+}
+
+// redactJSONPrincipals covers "principal":"alice" (and single-quoted) when
+// the value is a bare name rather than User:name (already handled above).
+func (c *Cleaner) redactJSONPrincipals(text string) string {
+	return jsonPrincipalRe.ReplaceAllStringFunc(text, func(v string) string {
+		m := jsonPrincipalRe.FindStringSubmatch(v)
+		if len(m) != 4 {
+			return v
+		}
+		name := m[2]
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "x-") || name == "" || strings.HasPrefix(low, "user:") {
+			return v
+		}
+		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
+		return m[1] + tok + m[3]
+	})
+}
+
+// redactLoginUsers covers free-form phrases such as
+// "login successful for user alice" or "login failed for user bob".
+func (c *Cleaner) redactLoginUsers(text string) string {
+	return loginUserRe.ReplaceAllStringFunc(text, func(v string) string {
+		m := loginUserRe.FindStringSubmatch(v)
+		if len(m) != 3 {
+			return v
+		}
+		name := m[2]
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "x-") || name == "" {
+			return v
+		}
+		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
+		return m[1] + " " + tok
+	})
+}
+
+
+// redactMDSRequestUsers covers the Confluent MDS / Jetty-style request log
+// [date] LEVEL host - username [utc-timestamp] METHOD
+// e.g. [2024-10-16 15:48:01] INFO broker-1 - alice [2024-10-16T07:48:01.123Z] GET
+func (c *Cleaner) redactMDSRequestUsers(text string) string {
+	return mdsRequestUserRe.ReplaceAllStringFunc(text, func(v string) string {
+		m := mdsRequestUserRe.FindStringSubmatch(v)
+		if len(m) != 2 {
+			return v
+		}
+		name := m[1]
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "x-") || name == "" {
+			return v
+		}
+		tok := c.Store.consistent("user", low, "user", "Consistent", "x-redacted-user-x")
+		return " - " + tok + v[len(" - "+name):]
 	})
 }
 

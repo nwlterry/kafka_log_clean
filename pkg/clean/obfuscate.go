@@ -19,8 +19,18 @@ var (
 	// Maven/JPMS version after @, e.g. 4.1.135.Final
 	moduleVerRe = regexp.MustCompile(`(?i)^\d+\.\d+`)
 	ldapFilterRe = regexp.MustCompile(`(?i)(\((?:cn|uid|sAMAccountName|userPrincipalName|mail|memberOf|member|distinguishedName)\s*=\s*)([^)\\]+)(\))`)
-	// Kafka ACL / authorizer principal: User:alice or User:first_name.last_name
+	// Kafka / MDS principal and username forms:
+	//   User:alice  User:first_name.last_name  principal:User:bob
+	//   username=alice  username="alice"  "principal":"User:alice"
 	userPrincipalRe = regexp.MustCompile(`(?i)\b(user)\s*:\s*([A-Za-z][A-Za-z0-9._\-]{0,200})`)
+	userNameAssignRe = regexp.MustCompile(`(?i)\b(user(?:name|PrincipalName)?)\s*=\s*["']?([A-Za-z][A-Za-z0-9._\-]{0,200})["']?`)
+	// JSON-ish principal value that is not already covered by User: form.
+	jsonPrincipalRe = regexp.MustCompile(`(?i)(["']principal["']\s*:\s*["'])([A-Za-z][A-Za-z0-9._\-]{0,200})(["'])`)
+	// Free-form "login ... for user <name>" / "user <name> logged" phrases.
+	loginUserRe = regexp.MustCompile(`(?i)\b((?:login\s+(?:successful|failed|failure)?\s*(?:for\s+)?|authenticated\s+|failed\s+for\s+)user)\s+([A-Za-z][A-Za-z0-9._\-]{0,200})`)
+	// MDS request / access log: [date] LEVEL host - username [utc] METHOD
+	// e.g. [2024-10-16 15:48:01] INFO broker-1 - alice [2024-10-16T07:48:01.123Z] GET
+	mdsRequestUserRe = regexp.MustCompile(`(?i)\s-\s([A-Za-z][A-Za-z0-9._\-]{0,200})\s+\[[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.]+Z?\]\s+(?:GET|PUT|POST|DELETE|PATCH|HEAD|OPTIONS)\b`)
 	// Product token before a slash: Chrome, Edg, Version, AppleWebKit, ...
 	productTokenRe = regexp.MustCompile(`(?i)[A-Za-z][A-Za-z0-9._\-]*$`)
 )

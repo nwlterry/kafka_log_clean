@@ -179,6 +179,40 @@ func TestUserPrincipalFirstLast(t *testing.T) {
 	}
 }
 
+func TestMDSMetadataServerUsernames(t *testing.T) {
+	c := NewCleaner(DefaultConfig(), nil)
+	in := `Principal = User:first_name.last_name is Allowed
+principal:User:alice
+username=bob.smith username="carol.jones" username='dave.admin'
+userPrincipalName=eve.smith
+"principal":"frank.user" "principal":"User:grace.admin"
+{"authenticationInfo":{"principal":"User:heidi.ops"}}
+login successful for user first_name.last_name
+MdsBasicLoginService login - Login failed for kafka
+principal = User:kafka_cluster is a super user
+username=x-redacted-user-x should stay
+`
+	out := c.ObfuscateText(in)
+	leaks := []string{
+		"first_name.last_name", "alice", "bob.smith", "carol.jones",
+		"dave.admin", "eve.smith", "frank.user", "grace.admin", "heidi.ops",
+		"kafka_cluster",
+	}
+	for _, leak := range leaks {
+		if strings.Contains(out, leak) {
+			t.Fatalf("user leaked %q in:\n%s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "x-user-") {
+		t.Fatalf("missing user token:\n%s", out)
+	}
+	for _, keep := range []string{"User:", "principal:", "username=", "userPrincipalName=", `"principal":`} {
+		if !strings.Contains(out, keep) && !strings.Contains(strings.ToLower(out), strings.ToLower(keep)) {
+			t.Fatalf("key/prefix %q dropped:\n%s", keep, out)
+		}
+	}
+}
+
 func TestArchiveRoundTripTarGz(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
@@ -297,3 +331,29 @@ func TestLDAPDNAndSearchFilter(t *testing.T) {
 	}
 }
 
+func TestMDSRequestLogUsername(t *testing.T) {
+	c := NewCleaner(DefaultConfig(), nil)
+	in := `[2024-10-16 15:48:01] INFO broker-1.example.com - first_name.last_name [2024-10-16T07:48:01.123Z] GET /security/1.0/authenticate
+[2024-10-16 15:48:02,456] DEBUG 10.1.2.3 - alice [2024-10-16T07:48:02.456Z] POST /security/1.0/authorize
+[2024-10-16 15:48:03] WARN kafka-prod-01 - bob.smith [2024-10-16 07:48:03.000Z] PUT /security/1.0/roles
+[2024-10-16 15:48:04] ERROR 192.168.1.10 - carol [2024-10-16T07:48:04Z] DELETE /v1/metadata`
+	out := c.ObfuscateText(in)
+	for _, leak := range []string{"first_name.last_name", "alice", "bob.smith", "carol"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("username leaked %q in:\n%s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "x-user-") {
+		t.Fatalf("missing user token:\n%s", out)
+	}
+	// Structure should still be readable: host - token [timestamp] METHOD
+	if !strings.Contains(out, " - x-user-") || !strings.Contains(out, " GET ") || !strings.Contains(out, " POST ") {
+		t.Fatalf("request structure broken:\n%s", out)
+	}
+	// Already-redacted should stay
+	in2 := `[2024-10-16 15:48:01] INFO broker-1 - x-redacted-user-x [2024-10-16T07:48:01Z] GET`
+	out2 := c.ObfuscateText(in2)
+	if !strings.Contains(out2, "x-redacted-user-x") {
+		t.Fatalf("already-redacted token was altered:\n%s", out2)
+	}
+}
