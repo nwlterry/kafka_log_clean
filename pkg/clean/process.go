@@ -2,6 +2,7 @@ package clean
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"io"
@@ -182,6 +183,9 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 	var first error
 	var mu sync.Mutex
 	var done int
+	// At most two ~100MB logs in flight. Eight at once (workers=8) holds
+	// ~800MB+ and the 9th file looks stuck while the machine thrashes.
+	largeSlots := make(chan struct{}, 2)
 
 	worker := func() {
 		defer wg.Done()
@@ -201,7 +205,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				Logf("omit   %s", rel)
 				continue
 			}
-			data, err := os.ReadFile(f)
+			info, err := os.Stat(f)
 			if err != nil {
 				mu.Lock()
 				if first == nil {
@@ -210,7 +214,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				mu.Unlock()
 				continue
 			}
-			Logf("start  %s (%d bytes)", rel, len(data))
+			Logf("start  %s (%d bytes)", rel, info.Size())
 			outRel := c.ObfuscatePath(rel)
 			target := filepath.Join(dst, filepath.FromSlash(outRel))
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -222,10 +226,17 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				continue
 			}
 			var cleaned []byte
+			streamed := false
 			if IsMultiArchive(filepath.Base(f)) {
-				// Nested expand/scan/repack runs inline on this worker.
-				// Do not open another worker pool — that fills every slot
-				// and the outer pool never advances past the first N archives.
+				data, err := os.ReadFile(f)
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					continue
+				}
 				cleaned, err = processNestedArchive(c, data, filepath.Base(f))
 				if err != nil {
 					mu.Lock()
@@ -235,23 +246,53 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 					mu.Unlock()
 					continue
 				}
+			} else if info.Size() >= 4<<20 || strings.HasSuffix(strings.ToLower(filepath.Base(f)), ".gz") {
+				largeSlots <- struct{}{}
+				err := streamClean(c, f, target, rel)
+				<-largeSlots
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					continue
+				}
+				streamed = true
 			} else {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					continue
+				}
 				cleaned = ProcessBytes(c, data, filepath.Base(f))
 			}
-			if err := os.WriteFile(target, cleaned, 0o644); err != nil {
-				mu.Lock()
-				if first == nil {
-					first = err
+			if !streamed {
+				if err := os.WriteFile(target, cleaned, 0o644); err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					continue
 				}
-				mu.Unlock()
-				continue
 			}
 			c.AddProcessed()
 			mu.Lock()
 			done++
 			n := done
 			mu.Unlock()
-			Logf("clean  %s -> %s (%d bytes) [%d/%d]", rel, outRel, len(cleaned), n, len(files))
+			outSize := len(cleaned)
+			if streamed {
+				if st, err := os.Stat(target); err == nil {
+					outSize = int(st.Size())
+				}
+			}
+			Logf("clean  %s -> %s (%d bytes) [%d/%d]", rel, outRel, outSize, n, len(files))
 		}
 	}
 
@@ -265,6 +306,95 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 	close(jobs)
 	wg.Wait()
 	return first
+}
+
+// streamClean reads a large log (or single-file .gz) line by line and writes
+// the cleaned output as it goes, so a 100MB rolled log cannot pin a worker
+// with no output.
+func streamClean(c *Cleaner, src, dst, rel string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	var r io.Reader = in
+	lower := strings.ToLower(src)
+	if strings.HasSuffix(lower, ".gz") && !strings.HasSuffix(lower, ".tar.gz") {
+		zr, err := gzip.NewReader(in)
+		if err != nil {
+			return err
+		}
+		defer zr.Close()
+		r = zr
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	br := bufio.NewReaderSize(r, 1<<20)
+	bw := bufio.NewWriterSize(out, 1<<20)
+	defer bw.Flush()
+	var pem []byte
+	inPEM := false
+	lines := 0
+	var bytesIn int64
+	flush := func(b []byte) error {
+		if len(b) == 0 {
+			return nil
+		}
+		_, err := bw.WriteString(c.ObfuscateText(string(b)))
+		return err
+	}
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			bytesIn += int64(len(line))
+			low := strings.ToLower(string(line))
+			if strings.Contains(low, "-----begin ") {
+				inPEM = true
+				pem = append(pem[:0], line...)
+			} else if inPEM {
+				pem = append(pem, line...)
+				if strings.Contains(low, "-----end ") {
+					if err := flush(pem); err != nil {
+						return err
+					}
+					inPEM = false
+					pem = pem[:0]
+				}
+			} else if len(line) > 1<<20 {
+				for off := 0; off < len(line); off += 1 << 20 {
+					to := off + 1<<20
+					if to > len(line) {
+						to = len(line)
+					}
+					if err := flush(line[off:to]); err != nil {
+						return err
+					}
+				}
+			} else if err := flush(line); err != nil {
+				return err
+			}
+			lines++
+			if lines%50000 == 0 {
+				Logf("  ... %s %d lines (%d MB)", rel, lines, bytesIn>>20)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if inPEM && len(pem) > 0 {
+		if err := flush(pem); err != nil {
+			return err
+		}
+	}
+	Logf("  streamed %s (%d lines, %d MB)", rel, lines, bytesIn>>20)
+	return bw.Flush()
 }
 
 // processNestedArchive expands a zip/tar/tar.gz found inside the tree, cleans
