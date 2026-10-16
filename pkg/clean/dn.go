@@ -137,43 +137,49 @@ func scanDN(text string, i int) (end int, ok bool) {
 // valueContinues reports whether the whitespace at pos is inside an RDN value
 // (more words, then a comma and the next attribute) rather than the end of the DN.
 func valueContinues(text string, pos int) bool {
+	const maxWords = 24
+	const maxLook = 2048
 	n := len(text)
-	j := pos
-	for j < n && (text[j] == ' ' || text[j] == '\t') {
-		j++
+	limit := pos + maxLook
+	if limit > n {
+		limit = n
 	}
-	if j >= n {
-		return false
-	}
-	// next token
-	k := j
-	for k < n {
-		c := text[k]
-		if c == ' ' || c == '\t' || c == ',' || c == ';' || c == ')' || c == '(' || c == ']' || c == '}' || c == '"' || c == '\'' || c == '\n' || c == '\r' {
-			break
+	for w := 0; w < maxWords && pos < limit; w++ {
+		j := pos
+		for j < limit && (text[j] == ' ' || text[j] == '\t') {
+			j++
 		}
-		k++
-	}
-	if k == j {
-		return false
-	}
-	if strings.Contains(text[j:k], "=") {
-		return false
-	}
-	// after this token, if comma + attr, the token belongs to the value
-	m := k
-	for m < n && (text[m] == ' ' || text[m] == '\t') {
-		m++
-	}
-	if m < n && (text[m] == ',' || text[m] == ';') {
-		p := m + 1
-		for p < n && (text[p] == ' ' || text[p] == '\t') {
-			p++
+		if j >= limit {
+			return false
 		}
-		return dnAttrRe.MatchString(text[p:])
+		k := j
+		for k < limit {
+			c := text[k]
+			if c == ' ' || c == '\t' || c == ',' || c == ';' || c == ')' || c == '(' || c == ']' || c == '}' || c == '"' || c == '\'' || c == '\n' || c == '\r' {
+				break
+			}
+			k++
+		}
+		if k == j {
+			return false
+		}
+		if strings.Contains(text[j:k], "=") {
+			return false
+		}
+		m := k
+		for m < limit && (text[m] == ' ' || text[m] == '\t') {
+			m++
+		}
+		if m < limit && (text[m] == ',' || text[m] == ';') {
+			p := m + 1
+			for p < n && (text[p] == ' ' || text[p] == '\t') {
+				p++
+			}
+			return dnAttrRe.MatchString(text[p:])
+		}
+		pos = k
 	}
-	// more words — keep going only if they eventually lead to comma+attr
-	return valueContinues(text, k)
+	return false
 }
 
 // isLabelBoundary reports whether text[pos:] starts a cert/ldap label that
@@ -259,6 +265,21 @@ func isDNStart(text string, i int) bool {
 		if unicode.IsLetter(rune(prev)) || unicode.IsDigit(rune(prev)) || prev == '_' || prev == '.' || prev == '-' || prev == '(' {
 			return false
 		}
+	}
+	if i >= len(text) {
+		return false
+	}
+	c := text[i]
+	if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+		return false
+	}
+	// '=' must be close; avoids a regex call on every byte of a large log.
+	end := i + 24
+	if end > len(text) {
+		end = len(text)
+	}
+	if strings.IndexByte(text[i:end], '=') < 0 {
+		return false
 	}
 	return dnAttrRe.MatchString(text[i:])
 }
