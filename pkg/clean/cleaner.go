@@ -276,10 +276,23 @@ func (c *Cleaner) redactUserPrincipals(text string) string {
 }
 
 func replaceIPv4(text string, fn func(string) string) string {
-	return ipv4OnlyRe.ReplaceAllStringFunc(text, func(v string) string {
-		// Avoid turning "8.18.4" (3 octets) — regex already requires 4.
-		return fn(v)
-	})
+	locs := ipv4OnlyRe.FindAllStringIndex(text, -1)
+	if len(locs) == 0 {
+		return text
+	}
+	var b strings.Builder
+	last := 0
+	for _, loc := range locs {
+		ip := text[loc[0]:loc[1]]
+		if isBrowserOrProductVersion(text, loc[0], loc[1]) {
+			continue
+		}
+		b.WriteString(text[last:loc[0]])
+		b.WriteString(fn(ip))
+		last = loc[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
 }
 
 func (c *Cleaner) AddOmitted(rel string) {
