@@ -57,7 +57,7 @@ func ProcessBytes(c *Cleaner, data []byte, name string) []byte {
 		if err != nil {
 			return data
 		}
-		cleaned := []byte(c.ObfuscateText(string(inner)))
+		cleaned := obfuscatePayload(c, inner, name)
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
 		_, _ = zw.Write(cleaned)
@@ -71,7 +71,77 @@ func ProcessBytes(c *Cleaner, data []byte, name string) []byte {
 	if !isText(name, sample) {
 		return data
 	}
-	return []byte(c.ObfuscateText(string(data)))
+	return obfuscatePayload(c, data, name)
+}
+
+// obfuscatePayload cleans text. Files over 1 MiB are processed line by line so
+// a single huge log cannot stall the DN/IP scanners or blow the stack.
+func obfuscatePayload(c *Cleaner, data []byte, name string) []byte {
+	const chunkAt = 1 << 20
+	if len(data) < chunkAt {
+		return []byte(c.ObfuscateText(string(data)))
+	}
+	Logf("  large %s (%d bytes), line mode", name, len(data))
+	var out bytes.Buffer
+	out.Grow(len(data))
+	start := 0
+	lines := 0
+	var pem []byte
+	inPEM := false
+	flush := func(b []byte) {
+		if len(b) == 0 {
+			return
+		}
+		out.WriteString(c.ObfuscateText(string(b)))
+	}
+	for i := 0; i <= len(data); i++ {
+		if i < len(data) && data[i] != '\n' {
+			continue
+		}
+		end := i
+		if i < len(data) {
+			end = i + 1
+		}
+		line := data[start:end]
+		low := strings.ToLower(string(line))
+		if strings.Contains(low, "-----begin ") {
+			inPEM = true
+			pem = append(pem[:0], line...)
+		} else if inPEM {
+			pem = append(pem, line...)
+			if strings.Contains(low, "-----end ") {
+				flush(pem)
+				inPEM = false
+				pem = pem[:0]
+			}
+		} else {
+			// cap a single enormous line so scanners stay bounded
+			if len(line) > chunkAt {
+				for off := 0; off < len(line); off += chunkAt {
+					to := off + chunkAt
+					if to > len(line) {
+						to = len(line)
+					}
+					flush(line[off:to])
+				}
+			} else {
+				flush(line)
+			}
+		}
+		lines++
+		if lines%100000 == 0 {
+			Logf("  ... %s %d lines", name, lines)
+		}
+		start = end
+		if i == len(data) {
+			break
+		}
+	}
+	if inPEM && len(pem) > 0 {
+		flush(pem)
+	}
+	Logf("  large %s done (%d lines)", name, lines)
+	return out.Bytes()
 }
 
 func walkFiles(root string) ([]string, error) {
@@ -131,7 +201,6 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				Logf("omit   %s", rel)
 				continue
 			}
-			Logf("start  %s", rel)
 			data, err := os.ReadFile(f)
 			if err != nil {
 				mu.Lock()
@@ -141,6 +210,7 @@ func ProcessTree(c *Cleaner, src, dst string, workers int) error {
 				mu.Unlock()
 				continue
 			}
+			Logf("start  %s (%d bytes)", rel, len(data))
 			outRel := c.ObfuscatePath(rel)
 			target := filepath.Join(dst, filepath.FromSlash(outRel))
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
