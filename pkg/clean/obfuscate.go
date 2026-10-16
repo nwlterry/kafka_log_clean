@@ -21,7 +21,51 @@ var (
 	ldapFilterRe = regexp.MustCompile(`(?i)(\((?:cn|uid|sAMAccountName|userPrincipalName|mail|memberOf|member|distinguishedName)\s*=\s*)([^)\\]+)(\))`)
 	// Kafka ACL / authorizer principal: User:alice or User:first_name.last_name
 	userPrincipalRe = regexp.MustCompile(`(?i)\b(user)\s*:\s*([A-Za-z][A-Za-z0-9._\-]{0,200})`)
+	// Product token before a slash: Chrome, Edg, Version, AppleWebKit, ...
+	productTokenRe = regexp.MustCompile(`(?i)[A-Za-z][A-Za-z0-9._\-]*$`)
 )
+
+// browserNames are User-Agent product tokens whose following dotted version
+// must never be treated as an IPv4 address.
+var browserNames = map[string]struct{}{
+	"chrome": {}, "chromium": {}, "headlesschrome": {}, "crios": {},
+	"firefox": {}, "fxios": {}, "focus": {}, "klar": {}, "waterfox": {},
+	"librewolf": {}, "palemoon": {}, "seamonkey": {}, "torbrowser": {},
+	"safari": {}, "version": {}, "applewebkit": {}, "webkit": {}, "mobile": {},
+	"edge": {}, "edg": {}, "edgios": {}, "edga": {},
+	"opr": {}, "opera": {}, "opios": {},
+	"vivaldi": {}, "brave": {}, "samsungbrowser": {}, "yabrowser": {},
+	"qqbrowser": {}, "ucbrowser": {}, "miuibrowser": {}, "huaweibrowser": {},
+	"duckduckgo": {}, "silk": {}, "maxthon": {}, "electron": {},
+	"gecko": {}, "trident": {}, "msie": {}, "rv": {},
+	"slack": {}, "teams": {}, "outlook": {},
+}
+
+// isBrowserOrProductVersion reports whether text[start:end] is a dotted
+// product version (Chrome/155.0.0.0, Edg/120.0.0.0, Version/17.6.1.0) rather
+// than an IPv4 address. Any Name/x.x.x.x is a product version; known browser
+// names also cover space or colon separators.
+func isBrowserOrProductVersion(text string, start, end int) bool {
+	if start <= 0 {
+		return false
+	}
+	// Name/x.x.x.x — the UA / product-version form.
+	if text[start-1] == '/' {
+		token := productTokenRe.FindString(text[:start-1])
+		if token != "" {
+			return true
+		}
+	}
+	// Name<sep>x.x.x.x for known browsers (space, colon, equals, paren).
+	sep := text[start-1]
+	if sep == ' ' || sep == ':' || sep == '=' || sep == '(' {
+		token := productTokenRe.FindString(text[:start-1])
+		if _, ok := browserNames[strings.ToLower(token)]; ok {
+			return true
+		}
+	}
+	return false
+}
 
 var nonMailTLDs = map[string]struct{}{
 	"final": {}, "snapshot": {}, "release": {}, "beta": {}, "alpha": {},
@@ -77,6 +121,7 @@ func looksLikeIPv6(v string) bool {
 	ip := net.ParseIP(v)
 	return ip != nil && ip.To4() == nil
 }
+
 
 type secretPat struct {
 	re   *regexp.Regexp
